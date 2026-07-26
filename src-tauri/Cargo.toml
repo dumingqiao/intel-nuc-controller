@@ -1,0 +1,24 @@
+[package]
+name = "nuc-x15-controller"
+version = "0.1.0"
+description = "Intel NUC hardware control center"
+authors = ["Intel NUC Control Center"]
+edition = "2021"
+
+[lib]
+name = "nuc_x15_controller_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+serde_json = "1"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+gio = "0.18.4"
+tauri-plugin-autostart = "2"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"

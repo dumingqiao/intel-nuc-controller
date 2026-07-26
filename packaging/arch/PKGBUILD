@@ -1,0 +1,61 @@
+pkgname=nuc-x15-controller
+pkgver=0.1.0
+pkgrel=11
+pkgdesc="Intel NUC hardware control center"
+arch=('x86_64')
+license=('custom')
+depends=(
+  'gtk3'
+  'libayatana-appindicator'
+  'uniwill-laptop-dkms>=0.1.0-2'
+  'webkit2gtk-4.1'
+)
+options=('!debug')
+
+_project_root="$(cd "${startdir}/../.." && pwd)"
+
+prepare() {
+  local release_version build_number
+
+  release_version="$(
+    sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' \
+      "${_project_root}/package.json" | head -n1
+  )"
+  build_number="$(
+    sed -n 's/^[[:space:]]*"buildNumber":[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+      "${_project_root}/package.json" | head -n1
+  )"
+  [[ "${release_version}" == "${pkgver}" ]] ||
+    error "package.json version (${release_version}) does not match pkgver (${pkgver})"
+  [[ "${build_number}" == "${pkgrel}" ]] ||
+    error "package.json buildNumber (${build_number}) does not match pkgrel (${pkgrel})"
+}
+
+package() {
+  install -Dm755 \
+    "${_project_root}/src-tauri/target/release/nuc-x15-controller" \
+    "${pkgdir}/usr/bin/nuc-x15-controller"
+
+  install -Dm644 \
+    "${startdir}/nuc-x15-controller.desktop" \
+    "${pkgdir}/usr/share/applications/nuc-x15-controller.desktop"
+
+  install -Dm644 \
+    "${_project_root}/src-tauri/icons/32x32.png" \
+    "${pkgdir}/usr/share/icons/hicolor/32x32/apps/nuc-x15-controller.png"
+  install -Dm644 \
+    "${_project_root}/src-tauri/icons/64x64.png" \
+    "${pkgdir}/usr/share/icons/hicolor/64x64/apps/nuc-x15-controller.png"
+  install -Dm644 \
+    "${_project_root}/src-tauri/icons/128x128.png" \
+    "${pkgdir}/usr/share/icons/hicolor/128x128/apps/nuc-x15-controller.png"
+  install -Dm644 \
+    "${_project_root}/src-tauri/icons/128x128@2x.png" \
+    "${pkgdir}/usr/share/icons/hicolor/256x256/apps/nuc-x15-controller.png"
+  install -Dm644 \
+    "${_project_root}/src-tauri/icons/icon.png" \
+    "${pkgdir}/usr/share/icons/hicolor/512x512/apps/nuc-x15-controller.png"
+  install -Dm644 \
+    "${_project_root}/src-tauri/icons/icon.svg" \
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/nuc-x15-controller.svg"
+}

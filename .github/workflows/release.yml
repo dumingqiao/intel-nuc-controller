@@ -1,0 +1,195 @@
+name: Release Linux packages
+
+on:
+  push:
+    tags:
+      - "*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deb-rpm:
+    name: Build DEB and RPM (x86_64)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf \
+            pkg-config \
+            rpm
+
+      - name: Select stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Run checks
+        run: |
+          npm run build
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Build native packages
+        run: npm run build:linux-packages
+
+      - name: Upload DEB and RPM packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel-nuc-control-center-deb-rpm-x86_64
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+
+  arch:
+    name: Build Arch package (x86_64)
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install Arch build dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --needed --noconfirm \
+            base-devel \
+            gtk3 \
+            libayatana-appindicator \
+            librsvg \
+            nodejs \
+            npm \
+            patchelf \
+            rust \
+            webkit2gtk-4.1
+
+      - name: Create an unprivileged package builder
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "${GITHUB_WORKSPACE}"
+
+      - name: Install dependencies and run checks
+        run: |
+          runuser -u builder -- env HOME=/home/builder \
+            bash -c "cd '${GITHUB_WORKSPACE}' && npm ci && npm run build && cargo test --locked --manifest-path src-tauri/Cargo.toml"
+
+      - name: Build Arch package
+        run: |
+          runuser -u builder -- env HOME=/home/builder \
+            bash -c "cd '${GITHUB_WORKSPACE}' && ./scripts/build-arch-package.sh"
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel-nuc-control-center-arch-x86_64
+          if-no-files-found: error
+          path: src-tauri/target/release/bundle/arch/*.pkg.tar.zst
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - deb-rpm
+      - arch
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out complete history and tags
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download release packages
+        uses: actions/download-artifact@v5
+        with:
+          merge-multiple: true
+          path: release-assets
+
+      - name: Build release notes from tag and commits
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          tag="${RELEASE_TAG}"
+          previous_tag="$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)"
+
+          git for-each-ref \
+            --format='%(contents:subject)%0a%0a%(contents:body)' \
+            "refs/tags/${tag}" > tag-notes.md
+
+          if [[ -n "${previous_tag}" ]]; then
+            commit_range="${previous_tag}..${tag}"
+          else
+            commit_range="${tag}"
+          fi
+
+          {
+            cat tag-notes.md
+            echo
+            echo "## Commits"
+            echo
+            git log \
+              --no-merges \
+              --pretty=format:"- \`%h\` %s — %an" \
+              "${commit_range}"
+            echo
+          } > release-notes.md
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mapfile -d '' release_assets < <(
+            find release-assets -type f -print0
+          )
+          if (( ${#release_assets[@]} == 0 )); then
+            echo "No release assets were downloaded." >&2
+            exit 1
+          fi
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --notes-file release-notes.md
+            gh release upload \
+              "${RELEASE_TAG}" \
+              "${release_assets[@]}" \
+              --clobber
+          else
+            gh release create \
+              "${RELEASE_TAG}" \
+              "${release_assets[@]}" \
+              --title "${RELEASE_TAG}" \
+              --notes-file release-notes.md \
+              --verify-tag
+          fi

@@ -1,0 +1,52 @@
+# JavaScript dependencies and package-manager state
+/node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+
+# Frontend output and reports
+/dist/
+/coverage/
+*.tsbuildinfo
+
+# Rust and Tauri output
+/src-tauri/target/
+/src-tauri/gen/
+target/
+
+# Native release packages
+*.deb
+*.rpm
+*.pkg.tar.zst
+*.AppImage
+
+# Runtime configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and crash output
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+core
+core.*
+
+# IDE and editor state
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+
+# Local agent and tool state
+/.claude/
+/.codex
+/.codex/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+

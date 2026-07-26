@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Intel NUC Control Center
+Comment=Intel NUC hardware control center
+Exec=nuc-x15-controller
+Icon=nuc-x15-controller
+Terminal=false
+Categories=System;Settings;Utility;
+Keywords=NUC;power;fan;keyboard;lightbar;
+StartupNotify=true
+StartupWMClass=nuc-x15-controller
