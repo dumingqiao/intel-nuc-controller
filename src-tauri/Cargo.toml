@@ -1,6 +1,6 @@
 [package]
 name = "nuc-x15-controller"
-version = "0.1.0"
+version = "0.1.1"
 description = "Intel NUC hardware control center"
 authors = ["Intel NUC Control Center"]
 edition = "2021"

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="112" height="112" alt="Intel NUC Control Center 图标">
+  <img src="src-tauri/icons/icon.svg" width="112" height="112" alt="Intel NUC Control Center 图标">
 </p>
 
 <h1 align="center">Intel NUC Control Center</h1>
@@ -49,6 +49,7 @@ Intel NUC Control Center 为
 | 键盘灯效 | 按电源来源配置、亮度、动态速度、方向、按键响应与多种灯效 |
 | 键盘控制 | Fn 锁定、Windows 按键和触摸板开关 |
 | 设备信息 | DMI 系统与内存、固件、物理磁盘、文件系统可用空间、SMART 健康与电池信息 |
+| 系统设置 | 充电健康控制：完全充满、65% 保护和自定义充电上限；仅在电池支持阈值控制时可用 |
 | 桌面集成 | 托盘快捷控制、开机静默启动、系统/深色/浅色主题和多语言托盘菜单 |
 | 多语言 | 简体中文、英文、法文和德文，首次启动自动匹配系统语言 |
 
@@ -98,7 +99,7 @@ flowchart LR
 
 - x86_64 Linux。
 - 受支持的 Intel NUC X15 或兼容 Uniwill 平台。
-- [`uniwill-laptop-dkms`](https://github.com/dumingqiao/uniwill-laptop-dkms) `0.1.1-1`
+- [`uniwill-laptop-dkms`](https://github.com/dumingqiao/uniwill-laptop-dkms) `0.1.2-1`
   或更高版本，包含内核模块、udev 规则和 `uniwilld` 系统服务。
 - GTK 3、WebKitGTK 4.1 与 Ayatana AppIndicator 运行库。
 

@@ -478,8 +478,9 @@ Disable:
 
 ## Fan Curves
 
-Fan curves are stored in daemon memory. They take effect immediately but are reset to defaults when
-the service restarts.
+Fan curves are persisted per power source. They control PWM when manual curve control is enabled
+and the selected fan mode is performance, standard, or quiet. Whisper and Benchmark temporarily
+suspend the curve; selecting a normal fan mode resumes it.
 
 Fan names:
 
@@ -666,6 +667,10 @@ Response:
 ```json
 {"ok":true,"fan_mode":2,"mode":"standard"}
 ```
+
+With `"source":"ac"` or `"source":"battery"`, the response also includes `base_mode`,
+the selected profile branch's normal fan mode. This remains available while Whisper or
+Benchmark temporarily overrides it.
 
 ### set_fan_mode
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="112" height="112" alt="Intel NUC Control Center icon">
+  <img src="src-tauri/icons/icon.svg" width="112" height="112" alt="Intel NUC Control Center icon">
 </p>
 
 <h1 align="center">Intel NUC Control Center</h1>
@@ -49,6 +49,7 @@ and designed specifically for a modern Linux desktop.
 | Keyboard lighting | Per-power-source lighting, brightness, motion speed, direction, reactive effects, and effect presets |
 | Keyboard controls | Fn lock, Windows key, and touchpad switches |
 | Device information | Static DMI system/memory data, firmware, physical storage, filesystem availability, SMART health, and battery data |
+| System settings | Battery charge health control: full charge, 65% protection, and an adjustable custom limit when supported |
 | Desktop integration | System tray controls, silent autostart, dark/light/system themes, and localized tray menus |
 | Languages | Simplified Chinese, English, French, and German with first-run system-language detection |
 
@@ -100,7 +101,7 @@ source of truth for hardware support.
 
 - Linux on x86_64.
 - A supported Intel NUC X15 or compatible Uniwill platform.
-- [`uniwill-laptop-dkms`](https://github.com/dumingqiao/uniwill-laptop-dkms) `0.1.1-1` or newer, including
+- [`uniwill-laptop-dkms`](https://github.com/dumingqiao/uniwill-laptop-dkms) `0.1.2-1` or newer, including
   the kernel module, udev rules, and `uniwilld` system service.
 - GTK 3, WebKitGTK 4.1, and Ayatana AppIndicator runtime libraries.
 

@@ -1,13 +1,13 @@
 pkgname=nuc-x15-controller
-pkgver=0.1.0
-pkgrel=11
+pkgver=0.1.1
+pkgrel=1
 pkgdesc="Intel NUC hardware control center"
 arch=('x86_64')
 license=('custom')
 depends=(
   'gtk3'
   'libayatana-appindicator'
-  'uniwill-laptop-dkms>=0.1.0-2'
+  'uniwill-laptop-dkms>=0.1.2-1'
   'webkit2gtk-4.1'
 )
 options=('!debug')

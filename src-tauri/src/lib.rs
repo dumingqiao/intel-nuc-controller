@@ -81,6 +81,12 @@ struct BatteryState {
 }
 
 #[derive(Clone, Debug, Serialize)]
+struct BatteryChargeLimit {
+    name: String,
+    threshold: u8,
+}
+
+#[derive(Clone, Debug, Serialize)]
 struct DeviceInformation {
     system: SystemInformation,
     storage: Vec<StorageDeviceInformation>,
@@ -423,10 +429,63 @@ fn get_application_version() -> String {
     env!("NUC_FULL_VERSION").to_string()
 }
 
+fn battery_charge_limit_from_json(battery: &Value) -> Option<BatteryChargeLimit> {
+    let name = battery.get("name")?.as_str()?.trim();
+    let threshold = value_as_u8(Some(battery), &["charge_control_end_threshold"])?;
+    if name.is_empty() || !(1..=100).contains(&threshold) {
+        return None;
+    }
+    Some(BatteryChargeLimit {
+        name: name.to_string(),
+        threshold,
+    })
+}
+
+fn first_charge_control_battery(response: &Value) -> Option<BatteryChargeLimit> {
+    response
+        .get("batteries")?
+        .as_array()?
+        .iter()
+        .find_map(battery_charge_limit_from_json)
+}
+
+#[tauri::command]
+fn get_battery_charge_limit() -> Result<Option<BatteryChargeLimit>, String> {
+    let response = query_uniwilld_control(json!({"cmd": "get_batteries"}))?;
+    Ok(first_charge_control_battery(&response))
+}
+
+#[tauri::command]
+fn set_battery_charge_limit(name: String, threshold: u8) -> Result<BatteryChargeLimit, String> {
+    if !(1..=100).contains(&threshold) {
+        return Err("充电上限必须在 1% 到 100% 之间".to_string());
+    }
+    let response = query_uniwilld_control(json!({
+        "cmd": "set_battery_charge_limit",
+        "name": name,
+        "threshold": threshold,
+    }))?;
+    let applied = response
+        .get("battery")
+        .and_then(battery_charge_limit_from_json)
+        .ok_or_else(|| "控制服务未返回充电上限".to_string())?;
+    if applied.name != name || applied.threshold != threshold {
+        return Err(format!(
+            "充电上限回读为 {}%，与请求的 {}% 不一致",
+            applied.threshold, threshold
+        ));
+    }
+    Ok(applied)
+}
+
 #[tauri::command]
 fn apply_fan_settings(settings: FanSettingsInput) -> Result<Value, String> {
     validate_curve("CPU", &settings.cpu_points)?;
     validate_curve("GPU", &settings.gpu_points)?;
+    validate_power_source(&settings.source)?;
+    if matches!(settings.fan_mode.as_deref(), Some("whisper" | "benchmark")) {
+        return Err("Whisper 或基准模式正在接管风扇，请先关闭该模式再应用曲线".to_string());
+    }
 
     let fan_mode = settings
         .fan_mode
@@ -487,10 +546,10 @@ fn get_persisted_fan_profiles() -> Result<Value, String> {
     let mut profiles = serde_json::Map::new();
 
     for source in ["ac", "battery"] {
-        let cpu = query_uniwilld(json!({"cmd": "get_curve", "fan": "cpu", "source": source}))?;
-        let gpu = query_uniwilld(json!({"cmd": "get_curve", "fan": "gpu", "source": source}))?;
-        let mode = query_uniwilld(json!({"cmd": "get_fan_mode", "source": source}))?;
-        let passive = query_uniwilld(json!({"cmd": "get_passive_cooling", "source": source}))?;
+        let cpu = query_uniwilld_control(json!({"cmd": "get_curve", "fan": "cpu", "source": source}))?;
+        let gpu = query_uniwilld_control(json!({"cmd": "get_curve", "fan": "gpu", "source": source}))?;
+        let mode = query_uniwilld_control(json!({"cmd": "get_fan_mode", "source": source}))?;
+        let passive = query_uniwilld_control(json!({"cmd": "get_passive_cooling", "source": source}))?;
         profiles.insert(
             source.to_string(),
             json!({"cpu": cpu, "gpu": gpu, "mode": mode, "passive": passive}),
@@ -746,27 +805,17 @@ fn apply_fan_mode(mode: &str, source: Option<&str>) -> Result<Value, String> {
         return Err(format!("不支持的风扇模式: {mode}"));
     }
     let mut write_request = json!({"cmd": "set_fan_mode", "mode": mode});
-    let mut read_request = json!({"cmd": "get_fan_mode"});
     if let Some(source) = source {
+        validate_power_source(source)?;
         write_request["source"] = json!(source);
-        read_request["source"] = json!(source);
     }
-    let write_result = query_uniwilld_control(write_request);
-    let readback = query_uniwilld(read_request)?;
-    let actual_mode =
-        value_as_string(Some(&readback), &["mode"]).unwrap_or_else(|| "unknown".to_string());
-
-    if actual_mode == mode {
-        return Ok(readback);
+    let response = query_uniwilld_control(write_request)?;
+    let actual_mode = value_as_string(Some(&response), &["mode"])
+        .ok_or_else(|| "控制服务未返回风扇模式".to_string())?;
+    if actual_mode != mode {
+        return Err(format!("硬件未接受 {mode} 模式，实际模式为 {actual_mode}"));
     }
-
-    let detail = write_result
-        .err()
-        .map(|error| format!("，控制服务返回：{error}"))
-        .unwrap_or_default();
-    Err(format!(
-        "硬件未接受 {mode} 模式，实际模式为 {actual_mode}{detail}"
-    ))
+    Ok(response)
 }
 
 fn validate_curve(name: &str, points: &[CurvePointInput]) -> Result<(), String> {
@@ -1028,9 +1077,10 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         quit,
     });
 
-    let tray_icon = Image::from_bytes(include_bytes!("../icons/64x64.png"))?;
+    let tray_icon = Image::from_bytes(include_bytes!("../icons/tray-mono.png"))?;
     TrayIconBuilder::with_id("nuc-x15-controller")
         .icon(tray_icon)
+        .icon_as_template(true)
         .menu(&menu)
         .tooltip("Intel NUC Control Center")
         .show_menu_on_left_click(false)
@@ -1689,7 +1739,7 @@ fn query_uniwilld(request: Value) -> Result<Value, String> {
 }
 
 fn query_uniwilld_control(request: Value) -> Result<Value, String> {
-    query_uniwilld_with_timeout(request, Duration::from_secs(4), 1)
+    query_uniwilld_with_timeout(request, Duration::from_secs(20), 1)
 }
 
 fn query_uniwilld_with_timeout(
@@ -2508,7 +2558,8 @@ fn read_gnome_touchpad_enabled() -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::{
-        dashboard_from_snapshot, is_touchpad_name, kwin_touchpad_enabled_parameters,
+        dashboard_from_snapshot, first_charge_control_battery, is_touchpad_name,
+        kwin_touchpad_enabled_parameters,
         merge_dashboard_snapshot, parse_input_inhibited, read_battery_information,
         read_storage_devices, read_system_information, supported_ui_language, tray_text,
         validate_curve, CurvePointInput,
@@ -2523,6 +2574,17 @@ mod tests {
                 pwm: last_pwm,
             },
         ]
+    }
+
+    #[test]
+    fn selects_internal_charge_control_battery_after_peripheral_battery() {
+        let response = json!({"batteries": [
+            {"name": "hidpp_battery_0", "charge_control_end_threshold": null},
+            {"name": "BAT0", "charge_control_end_threshold": 80}
+        ]});
+        let selected = first_charge_control_battery(&response).unwrap();
+        assert_eq!(selected.name, "BAT0");
+        assert_eq!(selected.threshold, 80);
     }
 
     #[test]
@@ -2800,6 +2862,8 @@ pub fn run() {
             set_ui_language,
             get_system_language,
             get_application_version,
+            get_battery_charge_limit,
+            set_battery_charge_limit,
             get_device_information,
             apply_fan_settings,
             set_fan_mode,

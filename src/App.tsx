@@ -42,6 +42,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import brandIcon from "../src-tauri/icons/icon.svg";
 import {
   hasSavedLanguagePreference,
   languageOptions,
@@ -110,6 +111,9 @@ type BatteryState = {
   cycle_count: number | null;
   charge_limit: number | null;
 };
+
+type BatteryChargeLimit = { name: string; threshold: number };
+type ChargeMode = "full" | "health" | "custom";
 
 type ThemeMode = "auto" | "dark" | "light";
 type PowerSource = "ac" | "battery";
@@ -509,9 +513,9 @@ const defaultDeviceInformation: DeviceInformation = {
   versions: {
     controller: {
       name: "nuc-x15-controller",
-      version: "0.1.0",
+      version: "0.1.1",
       build: "9",
-      full: "0.1.0+9",
+      full: "0.1.1+1",
     },
     service: null,
   },
@@ -667,7 +671,7 @@ function App() {
         <aside className="sidebar glass-panel">
           <div className="brand">
             <div className="brand-mark">
-              <Power size={18} />
+              <img src={brandIcon} alt="" />
             </div>
             <div>
               <p className="brand-name">Intel NUC</p>
@@ -923,12 +927,124 @@ function SystemSettingsPage({
             ))}
           </div>
         </section>
+
+        <BatteryChargeCard connected={dashboard.connected} />
       </div>
       <div className="settings-version">
         <span>{t("settings.version")}</span>
         <strong>{appVersion}</strong>
       </div>
     </div>
+  );
+}
+
+function BatteryChargeCard({ connected }: { connected: boolean }) {
+  const { t } = useI18n();
+  const [battery, setBattery] = useState<BatteryChargeLimit | null>(null);
+  const [mode, setMode] = useState<ChargeMode>("custom");
+  const [customLimit, setCustomLimit] = useState(80);
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!isTauriRuntime()) {
+      setBattery({ name: "BAT0", threshold: 80 });
+      setMode("custom");
+      setLoading(false);
+      return;
+    }
+    if (!connected) {
+      setBattery(null);
+      setFeedback("");
+      setLoading(false);
+      return;
+    }
+    let disposed = false;
+    setLoading(true);
+    setError("");
+    void invoke<BatteryChargeLimit | null>("get_battery_charge_limit")
+      .then((next) => {
+        if (disposed) return;
+        setBattery(next);
+        if (next) {
+          setMode(next.threshold === 100 ? "full" : next.threshold === 65 ? "health" : "custom");
+          setCustomLimit(next.threshold);
+        }
+        setLoading(false);
+      })
+      .catch((readError) => {
+        if (disposed) return;
+        setBattery(null);
+        setError(t("settings.chargeReadFailed", { error: String(readError) }));
+        setLoading(false);
+      });
+    return () => { disposed = true; };
+  }, [connected, t]);
+
+  const applyLimit = async (nextMode: ChargeMode, threshold: number) => {
+    if (!battery || pending || !Number.isInteger(threshold) || threshold < 1 || threshold > 100) return;
+    setPending(true);
+    setError("");
+    setFeedback("");
+    if (!isTauriRuntime()) {
+      setBattery({ ...battery, threshold });
+      setMode(nextMode);
+      setFeedback(t("settings.chargeApplied", { threshold }));
+      setPending(false);
+      return;
+    }
+    try {
+      const applied = await invoke<BatteryChargeLimit>("set_battery_charge_limit", {
+        name: battery.name,
+        threshold,
+      });
+      setBattery(applied);
+      setMode(nextMode);
+      setFeedback(t("settings.chargeApplied", { threshold: applied.threshold }));
+    } catch (writeError) {
+      setError(t("settings.chargeApplyFailed", { error: String(writeError) }));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const disabled = pending || loading || !battery || (isTauriRuntime() && !connected);
+  return (
+    <section className="settings-card settings-charge-card glass-panel">
+      <header>
+        <span><BatteryCharging size={20} /></span>
+        <div><p>{t("settings.chargeKicker")}</p><h2>{t("settings.chargeHealth")}</h2></div>
+      </header>
+      {loading ? <p className="charge-status">{t("common.loading")}</p> : battery ? (
+        <>
+          <p className="charge-status">{connected || !isTauriRuntime() ? `${t("settings.chargeCurrent", { threshold: battery.threshold })} · ${battery.name}` : t("settings.serviceOffline")}</p>
+          <div className="charge-options" aria-label={t("settings.chargeHealth")}>
+            <button aria-pressed={mode === "full"} className={mode === "full" ? "charge-option charge-option-active" : "charge-option"} disabled={disabled} onClick={() => void applyLimit("full", 100)} type="button">
+              <strong>{t("settings.chargeFull")}</strong><small>100%</small>
+            </button>
+            <button aria-pressed={mode === "health"} className={mode === "health" ? "charge-option charge-option-active" : "charge-option"} disabled={disabled} onClick={() => void applyLimit("health", 65)} type="button">
+              <strong>{t("settings.chargeProtect")}</strong><small>65%</small>
+            </button>
+            <button aria-pressed={mode === "custom"} className={mode === "custom" ? "charge-option charge-option-active" : "charge-option"} disabled={disabled} onClick={() => { setMode("custom"); setFeedback(""); }} type="button">
+              <strong>{t("settings.chargeCustom")}</strong><small>{customLimit}%</small>
+            </button>
+          </div>
+          {mode === "custom" ? (
+            <div className="charge-custom">
+              <label htmlFor="charge-custom-limit">{t("settings.chargeTarget", { threshold: customLimit })}</label>
+              <div>
+                <input id="charge-custom-limit" type="range" min={1} max={100} step={1} value={customLimit} disabled={disabled} onChange={(event) => { setCustomLimit(Number(event.target.value)); setFeedback(""); }} />
+                <button disabled={disabled} onClick={() => void applyLimit("custom", customLimit)} type="button">{pending ? t("common.applying") : t("common.apply")}</button>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : <p className="charge-status">{connected ? t("settings.chargeUnavailable") : t("settings.serviceOffline")}</p>}
+      {feedback ? <p className="charge-feedback">{feedback}</p> : null}
+      {error ? <p className="charge-feedback charge-feedback-error" role="alert">{error}</p> : null}
+    </section>
   );
 }
 
@@ -2576,7 +2692,14 @@ function FanCurvePage({
 
     void invoke<Record<PowerSource, unknown>>("get_persisted_fan_profiles")
       .then((saved) => {
-        if (!disposed) setProfiles((current) => mergePersistedFanProfiles(current, saved));
+        if (!disposed) {
+          for (const source of ["ac", "battery"] as const) {
+            const entry = saved?.[source] as { mode?: { base_mode?: string } } | undefined;
+            const baseMode = entry?.mode?.base_mode;
+            if (baseMode) baseFanModes.current[source] = normalizeBaseFanMode(baseMode);
+          }
+          setProfiles((current) => mergePersistedFanProfiles(current, saved));
+        }
       })
       .catch(() => undefined);
 
@@ -2591,7 +2714,7 @@ function FanCurvePage({
 
   useEffect(() => {
     const mode = dashboard.fan_mode;
-    if (mode && mode !== "whisper" && mode !== "benchmark") {
+    if (mode === "performance" || mode === "standard" || mode === "quiet") {
       baseFanModes.current[actualSource] = mode;
     }
     if (!dashboard.connected) return;
@@ -2691,8 +2814,8 @@ function FanCurvePage({
           source,
         });
       }
-      const saved = await invoke<Record<PowerSource, unknown>>("get_persisted_fan_profiles");
-      setProfiles((current) => mergePersistedFanProfiles(current, saved));
+      const saved = await invoke<Record<PowerSource, unknown>>("get_persisted_fan_profiles").catch(() => null);
+      if (saved) setProfiles((current) => mergePersistedFanProfiles(current, saved));
       setFeedback(t("fan.strategyApplied", { strategy: strategyLabel(key, t) }));
     } catch (error) {
       setProfiles((current) => ({ ...current, [source]: previousProfile }));
@@ -2725,8 +2848,12 @@ function FanCurvePage({
       await invoke("apply_fan_settings", {
         settings: profileToSettings(profile, baseFanModes.current[activeSource], activeSource),
       });
-      const saved = await invoke<Record<PowerSource, unknown>>("get_persisted_fan_profiles");
-      setProfiles((current) => mergePersistedFanProfiles(current, saved));
+      const saved = await invoke<Record<PowerSource, unknown>>("get_persisted_fan_profiles").catch(() => null);
+      if (saved) setProfiles((current) => mergePersistedFanProfiles(current, saved));
+      else setProfiles((current) => ({
+        ...current,
+        [activeSource]: { ...current[activeSource], whisper: false, benchmark: false },
+      }));
       setApplyState("saved");
       setFeedback(t("fan.profileApplied", { source: powerSourceLabel(activeSource, t) }));
     } catch (error) {
@@ -2883,6 +3010,7 @@ function FanCurvePage({
               <span>{t("fan.editing")}</span>
               <strong>{t("fan.plan", { source: powerSourceLabel(activeSource, t) })}</strong>
             </div>
+            {(profile.whisper || profile.benchmark) && <p className="curve-override-hint">{t("fan.curveOverrideHint")}</p>}
             <div className="action-buttons">
               <button className="secondary-action" onClick={resetProfile} type="button">
                 <RotateCcw size={15} />{t("common.reset")}
@@ -3272,6 +3400,7 @@ function TitleBar() {
   return (
     <div className="titlebar">
       <div className="titlebar-drag" onMouseDown={onDrag}>
+        <img className="titlebar-icon" src={brandIcon} alt="" />
         <span>Intel NUC Control Center</span>
       </div>
       <div className="window-controls">
@@ -3481,6 +3610,8 @@ function boolLabel(value: boolean | null, trueLabel: string, falseLabel: string)
 function powerModeLabel(mode: string, t: Translator) {
   if (mode === "performance") return t("common.performance");
   if (mode === "quiet" || mode === "silent") return t("common.quiet");
+  if (mode === "whisper") return "WhisperMode";
+  if (mode === "benchmark") return t("fan.benchmark");
   if (mode === "power-saver" || mode === "powersave" || mode === "power_saver" || mode === "save-power") return t("common.saver");
   if (mode === "standard" || mode === "balanced" || mode === "balance") return t("common.balanced");
   return "--";
@@ -3582,7 +3713,7 @@ function profileToSettings(profile: FanProfile, fallbackMode = "standard", sourc
   return {
     cpuPoints: curveToPwmPoints(profile.cpu),
     gpuPoints: curveToPwmPoints(profile.gpu),
-    fanMode: profileFanMode(profile, fallbackMode),
+    fanMode: normalizeBaseFanMode(fallbackMode),
     passiveCooling: profile.passive,
     source,
   };

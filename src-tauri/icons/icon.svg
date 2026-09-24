@@ -1,37 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="surface" x1="76" y1="52" x2="432" y2="468" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#172235"/>
-      <stop offset=".48" stop-color="#0d1522"/>
-      <stop offset="1" stop-color="#080d14"/>
+    <linearGradient id="tile" x1="88" y1="42" x2="423" y2="473" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#15baff"/>
+      <stop offset="1" stop-color="#006fff"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(155 119) rotate(46) scale(358)" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#1fd8ff" stop-opacity=".22"/>
-      <stop offset=".56" stop-color="#2979ff" stop-opacity=".07"/>
-      <stop offset="1" stop-color="#2979ff" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="accent" x1="131" y1="111" x2="391" y2="401" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#62e6ff"/>
-      <stop offset=".42" stop-color="#23b7ff"/>
-      <stop offset="1" stop-color="#3975ff"/>
-    </linearGradient>
-    <linearGradient id="edge" x1="89" y1="70" x2="428" y2="458" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#b9f4ff" stop-opacity=".38"/>
-      <stop offset=".45" stop-color="#579eff" stop-opacity=".16"/>
-      <stop offset="1" stop-color="#3975ff" stop-opacity=".05"/>
+    <linearGradient id="hub" x1="229" y1="225" x2="281" y2="285" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d7e5ef"/>
     </linearGradient>
   </defs>
-
-  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#surface)"/>
-  <rect x="8.75" y="8.75" width="494.5" height="494.5" rx="111.25" fill="none" stroke="url(#edge)" stroke-width="1.5"/>
-  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#glow)"/>
-
-  <circle cx="256" cy="256" r="164" fill="none" stroke="#b8d7ff" stroke-opacity=".08" stroke-width="12"/>
-  <circle cx="256" cy="256" r="132" fill="#07101a" fill-opacity=".22"/>
-
-  <path d="M102 112h82l72 94 72-94h82L304 256l106 144h-82l-72-94-72 94h-82l106-144L102 112Z" fill="url(#accent)"/>
-  <path d="M184 112l72 94 72-94h82L304 256l106 144h-82l-72-94V206l-72-94h-82Z" fill="#ffffff" fill-opacity=".13"/>
-
-  <rect x="222" y="222" width="68" height="68" rx="22" fill="#0b1420" stroke="#b9f4ff" stroke-opacity=".72" stroke-width="5"/>
-  <circle cx="256" cy="256" r="11" fill="#e9fbff"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#tile)"/>
+  <circle cx="256" cy="256" r="151" fill="#005ecb" fill-opacity=".18" stroke="#ffffff" stroke-opacity=".23" stroke-width="30"/>
+  <path d="M136 347 A151 151 0 1 1 376 347" fill="none" stroke="#f8fcff" stroke-width="30" stroke-linecap="round"/>
+  <circle cx="256" cy="256" r="103" fill="#0069d8" fill-opacity=".23" stroke="#ffffff" stroke-opacity=".38" stroke-width="4"/>
+  <path d="M256 256 L334 184" fill="none" stroke="#f8fcff" stroke-width="24" stroke-linecap="round"/>
+  <circle cx="256" cy="256" r="32" fill="url(#hub)"/>
 </svg>
