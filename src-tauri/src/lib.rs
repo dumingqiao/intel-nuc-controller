@@ -1,3 +1,5 @@
+mod metrics;
+
 use gio::{glib::variant::ToVariant, prelude::SettingsExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -41,6 +43,52 @@ struct SensorMetric {
     unit: &'static str,
     load: Option<f64>,
     frequency_mhz: Option<u64>,
+    /// PCI power state of the dGPU (`D0`, `D3cold`, ...); `None` for the CPU.
+    power_state: Option<String>,
+    /// `Some(false)` while the dGPU is runtime-suspended.
+    active: Option<bool>,
+}
+
+fn cpu_metric(value: Option<f64>, local: &metrics::LocalMetrics) -> SensorMetric {
+    SensorMetric {
+        label: "CPU",
+        value,
+        unit: "C",
+        load: local.cpu_load,
+        frequency_mhz: local.cpu_frequency_mhz,
+        power_state: None,
+        active: None,
+    }
+}
+
+fn gpu_metric(value: Option<f64>, local: &metrics::LocalMetrics) -> SensorMetric {
+    SensorMetric {
+        label: "GPU",
+        value,
+        unit: "C",
+        load: local.gpu_load,
+        frequency_mhz: local.gpu_frequency_mhz,
+        power_state: local.gpu_power_state.clone(),
+        active: local.gpu_active,
+    }
+}
+
+/// Apply freshly sampled local metrics to the cached dashboard and push it.
+fn apply_local_metrics(app: &AppHandle, local: &metrics::LocalMetrics) {
+    let dashboard = {
+        let Ok(mut state) = dashboard_state().lock() else {
+            return;
+        };
+        let current = &mut state.current;
+        current.cpu = cpu_metric(current.cpu.value, local);
+        current.gpu = gpu_metric(current.gpu.value, local);
+        if let Some(last) = state.last_success.as_mut() {
+            last.cpu = cpu_metric(last.cpu.value, local);
+            last.gpu = gpu_metric(last.gpu.value, local);
+        }
+        state.current.clone()
+    };
+    let _ = app.emit("dashboard-updated", dashboard);
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -525,6 +573,31 @@ fn apply_fan_settings(settings: FanSettingsInput) -> Result<Value, String> {
         "fan_mode": fan_mode,
         "passive": passive,
     }))
+}
+
+#[tauri::command]
+fn get_fan_curve_control() -> Result<Value, String> {
+    query_uniwilld_control(json!({"cmd": "get_fan_control"}))
+}
+
+/// Master switch for the custom fan curves. When disabled, the daemon hands the
+/// fans back to the firmware fan table of the active power profile's fan mode.
+#[tauri::command]
+fn set_fan_curve_control(enabled: bool) -> Result<Value, String> {
+    let mode = if enabled { "manual" } else { "auto" };
+    let response = query_uniwilld_control(json!({"cmd": "set_fan_control", "mode": mode}))?;
+    let applied = response
+        .get("curve_control")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "控制服务未返回风扇曲线状态".to_string())?;
+    if applied != enabled {
+        return Err(if enabled {
+            "风扇曲线控制启用失败，已回退到默认风扇策略".to_string()
+        } else {
+            "风扇曲线控制关闭失败".to_string()
+        });
+    }
+    Ok(response)
 }
 
 #[tauri::command]
@@ -1427,8 +1500,8 @@ fn merge_dashboard_snapshot(mut next: Dashboard, previous: &Dashboard) -> Dashbo
     next.cpu.load = next.cpu.load.or(previous.cpu.load);
     next.cpu.frequency_mhz = next.cpu.frequency_mhz.or(previous.cpu.frequency_mhz);
     next.gpu.value = next.gpu.value.or(previous.gpu.value);
-    next.gpu.load = next.gpu.load.or(previous.gpu.load);
-    next.gpu.frequency_mhz = next.gpu.frequency_mhz.or(previous.gpu.frequency_mhz);
+    // GPU load/frequency come straight from the local sampler, where `None`
+    // means the dGPU is asleep, so never fill them from an older snapshot.
 
     for (fan, old_fan) in next.fans.iter_mut().zip(previous.fans.iter()) {
         fan.pwm = fan.pwm.or(old_fan.pwm);
@@ -1504,24 +1577,13 @@ fn dashboard_from_snapshot(snapshot: &Value) -> Dashboard {
     let lightbar = snapshot.get("lightbar");
     let cpu_temp = value_as_f64(Some(snapshot), &["temp1_input"]).map(|value| value / 1000.0);
     let gpu_temp = value_as_f64(Some(snapshot), &["temp2_input"]).map(|value| value / 1000.0);
+    let local = metrics::latest();
 
     Dashboard {
         connected: true,
         message: "控制服务已连接".to_string(),
-        cpu: SensorMetric {
-            label: "CPU",
-            value: cpu_temp,
-            unit: "C",
-            load: read_cpu_load(),
-            frequency_mhz: read_cpu_frequency_mhz(),
-        },
-        gpu: SensorMetric {
-            label: "GPU",
-            value: gpu_temp,
-            unit: "C",
-            load: None,
-            frequency_mhz: None,
-        },
+        cpu: cpu_metric(cpu_temp, &local),
+        gpu: gpu_metric(gpu_temp, &local),
         fans: vec![
             build_fan(
                 "CPU Fan",
@@ -1570,20 +1632,8 @@ fn disconnected_dashboard(message: String) -> Dashboard {
     Dashboard {
         connected: false,
         message,
-        cpu: SensorMetric {
-            label: "CPU",
-            value: None,
-            unit: "C",
-            load: None,
-            frequency_mhz: None,
-        },
-        gpu: SensorMetric {
-            label: "GPU",
-            value: None,
-            unit: "C",
-            load: None,
-            frequency_mhz: None,
-        },
+        cpu: cpu_metric(None, &metrics::latest()),
+        gpu: gpu_metric(None, &metrics::latest()),
         fans: vec![
             build_fan("CPU Fan", None, None, None),
             build_fan("GPU Fan", None, None, None),
@@ -2326,29 +2376,6 @@ fn read_power_supply_number(path: &Path, name: &str) -> Option<u64> {
     read_power_supply_text(path, name).and_then(|text| text.parse::<u64>().ok())
 }
 
-fn read_cpu_frequency_mhz() -> Option<u64> {
-    fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .map(|khz| khz / 1000)
-}
-
-fn read_cpu_load() -> Option<f64> {
-    let stat = fs::read_to_string("/proc/stat").ok()?;
-    let cpu = stat.lines().next()?;
-    let parts = cpu.split_whitespace().skip(1);
-    let values: Vec<u64> = parts.filter_map(|part| part.parse::<u64>().ok()).collect();
-    if values.len() < 5 {
-        return None;
-    }
-    let idle = values.get(3)? + values.get(4).copied().unwrap_or(0);
-    let total: u64 = values.iter().sum();
-    if total == 0 {
-        return None;
-    }
-    Some(((total - idle) as f64 / total as f64 * 100.0).clamp(0.0, 100.0))
-}
-
 fn read_gsettings_dark_mode() -> Option<bool> {
     let color_scheme = read_gsettings_value("org.gnome.desktop.interface", "color-scheme")?;
     if let Some(is_dark) = parse_gsettings_color_scheme(&color_scheme) {
@@ -2848,6 +2875,8 @@ pub fn run() {
             setup_tray(app)?;
             start_dashboard_worker(app.handle().clone());
             start_daemon_client(app.handle().clone());
+            let metrics_app = app.handle().clone();
+            metrics::start(&APP_CLOSING, move |local| apply_local_metrics(&metrics_app, local));
             let hidden_start = std::env::args_os().any(|argument| argument == "--hidden");
             if !hidden_start {
                 show_main_window(app.handle());
@@ -2866,6 +2895,8 @@ pub fn run() {
             set_battery_charge_limit,
             get_device_information,
             apply_fan_settings,
+            get_fan_curve_control,
+            set_fan_curve_control,
             set_fan_mode,
             set_passive_cooling,
             get_persisted_fan_profiles,

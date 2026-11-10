@@ -21,7 +21,7 @@ makepkg_args=(
 # The companion driver package may have been built locally without being
 # installed on the build machine yet. Keep its dependency in .PKGINFO while
 # allowing this package to be produced alongside it.
-if ! pacman -T 'uniwill-laptop-dkms>=0.1.2-1' >/dev/null 2>&1; then
+if ! pacman -T 'uniwill-laptop-dkms>=0.1.4-1' >/dev/null 2>&1; then
   makepkg_args+=(--nodeps)
 fi
 

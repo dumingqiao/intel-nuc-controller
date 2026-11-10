@@ -34,13 +34,13 @@
     "linux": {
       "deb": {
         "depends": [
-          "uniwill-laptop-dkms (>= 0.1.2-1)"
+          "uniwill-laptop-dkms (>= 0.1.4-1)"
         ]
       },
       "rpm": {
         "release": "1",
         "depends": [
-          "uniwill-laptop-dkms >= 0.1.2"
+          "uniwill-laptop-dkms >= 0.1.4"
         ]
       }
     },

@@ -3043,6 +3043,39 @@ button {
   gap: 12px;
 }
 
+.curve-master {
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.curve-panel-disabled .curve-editable {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+  pointer-events: none;
+  user-select: none;
+}
+
+.curve-editable {
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+.curve-disabled-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.curve-disabled-banner > svg {
+  flex: none;
+}
+
 .strategy-panel {
   display: grid;
   gap: 8px;
@@ -3210,6 +3243,11 @@ button {
   cursor: wait;
   opacity: 0.68;
   transform: none;
+}
+
+.curve-actions-locked .action-buttons button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .saving-icon {

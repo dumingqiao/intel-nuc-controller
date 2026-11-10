@@ -42,8 +42,8 @@ Intel NUC Control Center 为
 
 | 功能区域 | 功能 |
 | --- | --- |
-| 仪表盘 | CPU/GPU 概览、风扇状态、当前电源策略、电池、键盘锁定与灯条状态 |
-| 风扇曲线 | CPU/GPU 独立曲线、接通电源与电池配置、被动散热、NVIDIA WhisperMode 与基准测试散热 |
+| 仪表盘 | CPU/GPU 温度、实时占用与主频（NVIDIA 独显仅在已唤醒时读取，不会唤醒 D3cold）、风扇状态、当前电源策略、电池、键盘锁定与灯条状态 |
+| 风扇曲线 | 曲线总开关（关闭时使用当前电源模式的固件默认风扇策略）、平滑调速的 CPU/GPU 独立曲线、接通电源与电池配置、被动散热、NVIDIA WhisperMode 与基准测试散热 |
 | 电源模式 | 持久化高性能、均衡、省电方案，每个方案分别配置平台功率模式和风扇模式 |
 | 灯条设置 | 按电源来源启用、RGB 颜色、亮度、最近颜色、彩虹和睡眠呼吸效果 |
 | 键盘灯效 | 按电源来源配置、亮度、动态速度、方向、按键响应与多种灯效 |
@@ -99,7 +99,7 @@ flowchart LR
 
 - x86_64 Linux。
 - 受支持的 Intel NUC X15 或兼容 Uniwill 平台。
-- [`uniwill-laptop-dkms`](https://github.com/dumingqiao/uniwill-laptop-dkms) `0.1.2-1`
+- [`uniwill-laptop-dkms`](https://github.com/dumingqiao/uniwill-laptop-dkms) `0.1.4-1`
   或更高版本，包含内核模块、udev 规则和 `uniwilld` 系统服务。
 - GTK 3、WebKitGTK 4.1 与 Ayatana AppIndicator 运行库。
 

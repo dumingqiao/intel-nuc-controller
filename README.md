@@ -42,8 +42,8 @@ and designed specifically for a modern Linux desktop.
 
 | Area | Capabilities |
 | --- | --- |
-| Dashboard | CPU/GPU summary, fan state, active power strategy, battery, keyboard locks, and light-bar status |
-| Fan curves | Independent CPU/GPU curves, AC and battery profiles, passive cooling, NVIDIA WhisperMode, and benchmark cooling |
+| Dashboard | CPU/GPU temperature, live usage and clock (NVIDIA dGPU read only while awake, never woken from D3cold), fan state, active power strategy, battery, keyboard locks, and light-bar status |
+| Fan curves | Master on/off switch (off follows the power mode's firmware fan policy), smoothly ramped independent CPU/GPU curves, AC and battery profiles, passive cooling, NVIDIA WhisperMode, and benchmark cooling |
 | Power modes | Persistent Performance, Balanced, and Battery Saver profiles with separate platform-power and fan modes |
 | Light bar | Per-power-source enable state, RGB color, brightness, recent colors, rainbow, and sleep breathing |
 | Keyboard lighting | Per-power-source lighting, brightness, motion speed, direction, reactive effects, and effect presets |
@@ -101,7 +101,7 @@ source of truth for hardware support.
 
 - Linux on x86_64.
 - A supported Intel NUC X15 or compatible Uniwill platform.
-- [`uniwill-laptop-dkms`](https://github.com/dumingqiao/uniwill-laptop-dkms) `0.1.2-1` or newer, including
+- [`uniwill-laptop-dkms`](https://github.com/dumingqiao/uniwill-laptop-dkms) `0.1.4-1` or newer, including
   the kernel module, udev rules, and `uniwilld` system service.
 - GTK 3, WebKitGTK 4.1, and Ayatana AppIndicator runtime libraries.
 

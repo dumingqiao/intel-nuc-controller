@@ -58,6 +58,10 @@ type SensorMetric = {
   unit: string;
   load: number | null;
   frequency_mhz: number | null;
+  /** PCI power state of the dGPU, e.g. "D0" or "D3cold". */
+  power_state?: string | null;
+  /** false while the dGPU is runtime-suspended. */
+  active?: boolean | null;
 };
 
 type FanMetric = {
@@ -302,8 +306,8 @@ const defaultFanProfiles: FanProfiles = {
 const fallbackDashboard: Dashboard = {
   connected: false,
   message: "",
-  cpu: { label: "CPU", value: 54, unit: "C", load: 37, frequency_mhz: 3200 },
-  gpu: { label: "GPU", value: 48, unit: "C", load: 18, frequency_mhz: 1455 },
+  cpu: { label: "CPU", value: 54, unit: "C", load: 37, frequency_mhz: 3200, power_state: null, active: null },
+  gpu: { label: "GPU", value: 48, unit: "C", load: 18, frequency_mhz: 1455, power_state: "D0", active: true },
   fans: [
     { label: "CPU Fan", pwm: 92, percent: 36, rpm: 2412, mode: "manual" },
     { label: "GPU Fan", pwm: 80, percent: 31, rpm: 2202, mode: "manual" },
@@ -513,9 +517,9 @@ const defaultDeviceInformation: DeviceInformation = {
   versions: {
     controller: {
       name: "nuc-x15-controller",
-      version: "0.1.1",
-      build: "9",
-      full: "0.1.1+1",
+      version: "0.1.2",
+      build: "1",
+      full: "0.1.2+1",
     },
     service: null,
   },
@@ -2677,6 +2681,13 @@ function FanCurvePage({
   const [applyState, setApplyState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [updatingStrategy, setUpdatingStrategy] = useState<StrategyKey | null>(null);
   const [feedback, setFeedback] = useState("");
+  // Master switch: true = daemon curve loop, false = firmware fan table of the
+  // active power profile's fan mode. Null until the daemon has reported it.
+  const [curveControl, setCurveControl] = useState<boolean | null>(
+    dashboard.fan_control === "manual" ? true : dashboard.fan_control === "auto" ? false : null,
+  );
+  const [updatingCurveControl, setUpdatingCurveControl] = useState(false);
+  const curveControlOff = curveControl === false;
   const baseFanModes = useRef<Record<PowerSource, string>>({
     ac: normalizeBaseFanMode(dashboard.fan_mode),
     battery: "standard",
@@ -2711,6 +2722,55 @@ function FanCurvePage({
   useEffect(() => {
     setActiveSource(actualSource);
   }, [actualSource]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    void invoke<{ curve_control?: boolean }>("get_fan_curve_control")
+      .then((response) => {
+        if (!disposed && typeof response?.curve_control === "boolean") setCurveControl(response.curve_control);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    // Whisper/Benchmark report themselves instead of the curve state, so only
+    // follow the pushed snapshot when it states manual or auto explicitly.
+    // React to snapshot changes only, so a stale snapshot cannot undo a
+    // toggle that just succeeded.
+    if (dashboard.fan_control === "manual") setCurveControl(true);
+    else if (dashboard.fan_control === "auto") setCurveControl(false);
+  }, [dashboard.fan_control]);
+
+  const toggleCurveControl = async (enabled: boolean) => {
+    if (updatingCurveControl) return;
+    const previous = curveControl;
+    setCurveControl(enabled);
+    setUpdatingCurveControl(true);
+    setApplyState("idle");
+    setFeedback(t(enabled ? "fan.curveControlEnabling" : "fan.curveControlDisabling"));
+
+    if (!isTauriRuntime()) {
+      setFeedback(t(enabled ? "fan.curveControlEnabled" : "fan.curveControlDisabled"));
+      setUpdatingCurveControl(false);
+      return;
+    }
+
+    try {
+      const response = await invoke<{ curve_control?: boolean }>("set_fan_curve_control", { enabled });
+      if (typeof response?.curve_control === "boolean") setCurveControl(response.curve_control);
+      setFeedback(t(enabled ? "fan.curveControlEnabled" : "fan.curveControlDisabled"));
+    } catch (error) {
+      setCurveControl(previous);
+      setApplyState("error");
+      setFeedback(t("fan.curveControlFailed", { error: String(error) }));
+    } finally {
+      setUpdatingCurveControl(false);
+    }
+  };
 
   useEffect(() => {
     const mode = dashboard.fan_mode;
@@ -2874,7 +2934,10 @@ function FanCurvePage({
       </div>
 
       <div className="fan-workspace">
-        <section className="curve-panel glass-panel">
+        <section
+          aria-disabled={curveControlOff}
+          className={`curve-panel glass-panel ${curveControlOff ? "curve-panel-disabled" : ""}`}
+        >
           <div className="curve-panel-head">
             <div>
               <p className="eyebrow">{t("fan.duty")}</p>
@@ -2921,6 +2984,14 @@ function FanCurvePage({
             </button>
           </div>
 
+          {curveControlOff ? (
+            <p className="curve-disabled-banner">
+              <Wind size={15} />
+              {t("fan.curveDisabledBanner")}
+            </p>
+          ) : null}
+
+          <div className="curve-editable" inert={curveControlOff ? true : undefined}>
           <FanCurveChart
             cpu={profile.cpu}
             gpu={profile.gpu}
@@ -2966,9 +3037,23 @@ function FanCurvePage({
               <button aria-label={t("fan.increaseDuty")} disabled={safetyPointSelected} onClick={() => updateDuty(point.duty + 1)} type="button">＋</button>
             </div>
           </div>
+          </div>
         </section>
 
         <aside className="cooling-rail">
+          <section className="curve-master glass-panel">
+            <StrategySwitch
+              checked={curveControl !== false}
+              description={updatingCurveControl
+                ? t("common.applying")
+                : t(curveControlOff ? "fan.curveControlOffHint" : "fan.curveControlOnHint")}
+              disabled={updatingCurveControl || curveControl === null || updatingStrategy !== null}
+              icon={<Wind size={17} />}
+              label={t("fan.curveControl")}
+              onChange={(enabled) => void toggleCurveControl(enabled)}
+            />
+          </section>
+
           <section className="strategy-panel glass-panel">
             <div className="strategy-heading">
               <div>
@@ -3005,17 +3090,19 @@ function FanCurvePage({
             />
           </section>
 
-          <section className="curve-actions glass-panel">
+          <section className={`curve-actions glass-panel ${curveControlOff ? "curve-actions-locked" : ""}`}>
             <div className="profile-summary">
               <span>{t("fan.editing")}</span>
               <strong>{t("fan.plan", { source: powerSourceLabel(activeSource, t) })}</strong>
             </div>
-            {(profile.whisper || profile.benchmark) && <p className="curve-override-hint">{t("fan.curveOverrideHint")}</p>}
+            {curveControlOff
+              ? <p className="curve-override-hint">{t("fan.curveDisabledHint")}</p>
+              : (profile.whisper || profile.benchmark) && <p className="curve-override-hint">{t("fan.curveOverrideHint")}</p>}
             <div className="action-buttons">
-              <button className="secondary-action" onClick={resetProfile} type="button">
+              <button className="secondary-action" disabled={curveControlOff} onClick={resetProfile} type="button">
                 <RotateCcw size={15} />{t("common.reset")}
               </button>
-              <button className="primary-action" disabled={applyState === "saving"} onClick={() => void applyProfile()} type="button">
+              <button className="primary-action" disabled={applyState === "saving" || curveControlOff || updatingCurveControl} onClick={() => void applyProfile()} type="button">
                 {applyState === "saved" ? <Check size={16} /> : applyState === "saving" ? <ChevronDown className="saving-icon" size={16} /> : <Save size={16} />}
                 {applyState === "saving" ? t("common.applying") : applyState === "saved" ? t("common.applied") : t("common.saveApply")}
               </button>
@@ -3456,7 +3543,12 @@ function SensorCard({ metric, tone }: { metric: SensorMetric; tone: "cpu" | "gpu
   const load = clamp(metric.load ?? 0, 0, 100);
   const tempText = metric.value === null ? "--" : `${Math.round(metric.value)}°${metric.unit}`;
   const loadText = metric.load === null ? "--" : `${Math.round(metric.load)}%`;
-  const freqText = metric.frequency_mhz === null ? "--" : `${(metric.frequency_mhz / 1000).toFixed(2)} GHz`;
+  const asleep = metric.active === false;
+  const freqText = asleep
+    ? t("sensor.gpuSleeping", { state: metric.power_state ?? "D3" })
+    : metric.frequency_mhz === null
+      ? "--"
+      : `${(metric.frequency_mhz / 1000).toFixed(2)} GHz`;
 
   return (
     <Card className={`metric-card glass-card ${tone}`}>

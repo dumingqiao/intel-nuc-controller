@@ -400,6 +400,9 @@ Switches fan control mode.
 
 `manual` enables the daemon's curve loop and writes `1` to `pwm1_enable` and `pwm2_enable`.
 `auto` disables the daemon's curve loop and writes `2` to `pwm1_enable` and `pwm2_enable`.
+It then reapplies the active profile branch's fan mode so the firmware fan table for the current
+power profile (performance, standard, or quiet) takes over again. While Whisper or Benchmark is
+active, only the saved intent changes; the firmware table is restored when that mode is left.
 
 Request:
 
@@ -494,6 +497,19 @@ Curve point rules:
 - Points must be sorted by increasing `temp`.
 - Up to 16 points are accepted.
 - Values between points use linear interpolation.
+
+The curve is the steady-state target, not an instant mapping. Each control tick (about once per
+second) the service:
+
+- low-pass filters the sensor temperature, following rising temperatures faster (about 3 s) than
+  falling ones (about 12 s);
+- limits PWM changes to about 20 PWM/s upwards and 6 PWM/s downwards;
+- waits 5 s before slowing a fan down and ignores differences under 4 PWM;
+- bypasses the upward smoothing within 5°C of the last curve point (and at or above 100°C), so
+  the failsafe point is applied immediately.
+
+After a curve, profile, or control-mode change, smoothing restarts from the fan's current hardware
+speed.
 
 ### get_curve
 
