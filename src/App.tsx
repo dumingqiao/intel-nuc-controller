@@ -517,9 +517,9 @@ const defaultDeviceInformation: DeviceInformation = {
   versions: {
     controller: {
       name: "nuc-x15-controller",
-      version: "0.1.2",
+      version: "0.1.3",
       build: "1",
-      full: "0.1.2+1",
+      full: "0.1.3+1",
     },
     service: null,
   },

@@ -40,7 +40,7 @@
       "rpm": {
         "release": "1",
         "depends": [
-          "uniwill-laptop-dkms >= 0.1.4"
+          "(uniwill-laptop-dkms >= 0.1.4)"
         ]
       }
     },
