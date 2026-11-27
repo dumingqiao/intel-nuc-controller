@@ -2936,106 +2936,163 @@ button {
 }
 
 .fan-curve-chart {
+  position: relative;
   width: 100%;
   height: 336px;
   min-width: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
 }
 
-.point-editor {
-  display: grid;
-  gap: 12px;
-  border-top: 1px solid var(--border);
-  padding-top: 14px;
+.fan-curve-chart svg {
+  display: block;
+  overflow: visible;
 }
 
-.point-list {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 6px;
+.curve-grid line {
+  stroke: var(--border);
+  stroke-dasharray: 4 4;
 }
 
-.point-button {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  height: 48px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 6px 4px;
-  color: var(--text-secondary);
-  background: var(--accent-soft);
-  cursor: pointer;
-}
-
-.point-button span {
-  font-size: 10px;
-}
-
-.point-button strong {
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.point-button:hover,
-.point-button-active {
-  border-color: currentColor;
-  background: var(--panel-strong);
-}
-
-.point-cpu {
-  color: var(--cpu);
-}
-
-.point-gpu {
-  color: var(--gpu);
-}
-
-.duty-control {
-  display: grid;
-  grid-template-columns: 112px 34px minmax(120px, 1fr) 34px;
-  align-items: center;
-  gap: 10px;
-}
-
-.duty-copy {
-  display: grid;
-  gap: 2px;
-}
-
-.duty-copy span {
-  color: var(--text-secondary);
+.curve-axis-label {
+  fill: var(--text-secondary);
   font-size: 11px;
 }
 
-.duty-copy strong {
-  font-size: 22px;
-  line-height: 1;
+.curve-axis-title {
+  fill: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
 }
 
-.duty-control > button {
-  width: 34px;
-  height: 30px;
+.curve-cpu {
+  --curve-color: var(--cpu);
+}
+
+.curve-gpu {
+  --curve-color: var(--gpu);
+}
+
+.curve-series {
+  opacity: 0.4;
+  transition: opacity 0.2s ease;
+}
+
+.curve-series-active {
+  opacity: 1;
+}
+
+.curve-line {
+  fill: none;
+  stroke: var(--curve-color);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.curve-area {
+  fill: var(--curve-color);
+  opacity: 0.1;
+  pointer-events: none;
+}
+
+.curve-point {
+  cursor: pointer;
+  outline: none;
+}
+
+.curve-series-active .curve-point {
+  cursor: grab;
+}
+
+.fan-curve-dragging,
+.fan-curve-dragging .curve-point {
+  cursor: grabbing;
+}
+
+.curve-point-hit {
+  fill: transparent;
+}
+
+.curve-point-dot {
+  fill: var(--curve-color);
+  stroke: var(--panel-strong);
+  stroke-width: 2;
+  transition: r 0.12s ease;
+}
+
+.curve-point:hover .curve-point-dot {
+  r: 7px;
+}
+
+.curve-point-selected .curve-point-dot,
+.curve-point-selected:hover .curve-point-dot {
+  r: 8px;
+  stroke: var(--text-primary);
+}
+
+.curve-point:focus-visible .curve-point-dot {
+  stroke: var(--text-primary);
+  stroke-width: 3;
+}
+
+.curve-point-safety .curve-point-dot {
+  stroke-dasharray: 3 2;
+}
+
+.curve-guide line {
+  stroke: var(--text-secondary);
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+.curve-live line {
+  stroke: var(--curve-color);
+  stroke-dasharray: 2 4;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.curve-live text {
+  fill: var(--curve-color);
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.curve-bubble {
+  position: absolute;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 6px;
+  padding: 3px 8px;
   color: var(--text-primary);
-  background: var(--accent-soft);
-  cursor: pointer;
-}
-
-.duty-control > button:hover {
   background: var(--panel-strong);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
-.duty-control > button:disabled,
-.duty-control input[type="range"]:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
+.curve-bubble-cpu {
+  border-color: var(--cpu);
 }
 
-.duty-control input[type="range"] {
-  width: 100%;
-  accent-color: var(--accent);
-  cursor: pointer;
+.curve-bubble-gpu {
+  border-color: var(--gpu);
+}
+
+.curve-drag-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .cooling-rail {

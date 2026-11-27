@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Card } from "@heroui/react";
-import ApexCharts, { type ApexOptions } from "apexcharts";
 import {
   Activity,
   Battery,
@@ -24,6 +23,7 @@ import {
   Minimize2,
   Monitor,
   Moon,
+  Move,
   Palette,
   PlugZap,
   Power,
@@ -517,9 +517,9 @@ const defaultDeviceInformation: DeviceInformation = {
   versions: {
     controller: {
       name: "nuc-x15-controller",
-      version: "0.1.3",
+      version: "0.1.4",
       build: "1",
-      full: "0.1.3+1",
+      full: "0.1.4+1",
     },
     service: null,
   },
@@ -2694,8 +2694,6 @@ function FanCurvePage({
   });
   const profile = profiles[activeSource];
   const selectedCurve = profile[selectedFan];
-  const point = selectedCurve[selectedPoint] ?? selectedCurve[0];
-  const safetyPointSelected = selectedPoint === selectedCurve.length - 1;
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -2814,19 +2812,6 @@ function FanCurvePage({
     }));
     setApplyState("idle");
     setFeedback(t("fan.unsaved"));
-  };
-
-  const updateDuty = (nextDuty: number) => {
-    const curve = profile[selectedFan];
-    // The daemon requires every curve to end at full speed at or below 100°C.
-    // Keep that failsafe point immutable instead of allowing an invalid curve
-    // to reach the service.
-    if (selectedPoint === curve.length - 1) return;
-    const lower = selectedPoint > 0 ? curve[selectedPoint - 1].duty : 0;
-    const upper = selectedPoint < curve.length - 1 ? curve[selectedPoint + 1].duty : 100;
-    const duty = Math.round(clamp(nextDuty, lower, upper));
-    const nextCurve = curve.map((item, index) => index === selectedPoint ? { ...item, duty } : item);
-    updateProfile({ [selectedFan]: nextCurve });
   };
 
   const setStrategy = async (key: StrategyKey, enabled: boolean) => {
@@ -2995,48 +2980,19 @@ function FanCurvePage({
           <FanCurveChart
             cpu={profile.cpu}
             gpu={profile.gpu}
-            dark={dark}
+            liveTemps={{ cpu: dashboard.cpu.value, gpu: dashboard.gpu.value }}
             selectedFan={selectedFan}
             selectedPoint={selectedPoint}
             onSelect={(fan, index) => {
               setSelectedFan(fan);
               setSelectedPoint(index);
             }}
+            onChange={(fan, curve) => updateProfile({ [fan]: curve })}
           />
-
-          <div className="point-editor">
-            <div className="point-list" aria-label={t("fan.points", { fan: selectedFan.toUpperCase() })}>
-              {selectedCurve.map((item, index) => (
-                <button
-                  className={index === selectedPoint ? `point-button point-button-active point-${selectedFan}` : "point-button"}
-                  key={item.temp}
-                  onClick={() => setSelectedPoint(index)}
-                  type="button"
-                >
-                  <span>{item.temp}°</span>
-                  <strong>{item.duty}%</strong>
-                </button>
-              ))}
-            </div>
-            <div className="duty-control">
-              <div className="duty-copy">
-                <span>{selectedFan.toUpperCase()} · {point.temp}°C</span>
-                <strong>{safetyPointSelected ? `100% · ${t("fan.safePoint")}` : `${point.duty}%`}</strong>
-              </div>
-              <button aria-label={t("fan.decreaseDuty")} disabled={safetyPointSelected} onClick={() => updateDuty(point.duty - 1)} type="button">−</button>
-              <input
-                aria-label={t("fan.duty")}
-                disabled={safetyPointSelected}
-                max={100}
-                min={0}
-                onChange={(event) => updateDuty(Number(event.target.value))}
-                step={1}
-                type="range"
-                value={point.duty}
-              />
-              <button aria-label={t("fan.increaseDuty")} disabled={safetyPointSelected} onClick={() => updateDuty(point.duty + 1)} type="button">＋</button>
-            </div>
-          </div>
+          <p className="curve-drag-hint">
+            <Move size={14} />
+            {t("fan.dragHint")}
+          </p>
           </div>
         </section>
 
@@ -3114,133 +3070,265 @@ function FanCurvePage({
   );
 }
 
+// The daemon accepts curves whose temperatures strictly increase, whose duty
+// never falls as temperature rises, and whose last point is 100% at or below
+// 100°C. Every drag is normalised to that shape before it reaches state, so an
+// edited curve can always be applied.
+const CURVE_TEMP_MIN = 20;
+const CURVE_TEMP_MAX = 100;
+const CURVE_TEMP_GAP = 2;
+const CHART_HEIGHT = 336;
+const CHART_MARGIN = { top: 16, right: 20, bottom: 40, left: 48 };
+
+function moveCurvePoint(curve: FanCurvePoint[], index: number, nextTemp: number, nextDuty: number): FanCurvePoint[] {
+  const last = curve.length - 1;
+  const current = curve[index];
+  if (!current) return curve;
+
+  const low = index > 0 ? curve[index - 1].temp + CURVE_TEMP_GAP : CURVE_TEMP_MIN;
+  const high = index < last ? curve[index + 1].temp - CURVE_TEMP_GAP : CURVE_TEMP_MAX;
+  const temp = low <= high ? Math.round(clamp(nextTemp, low, high)) : current.temp;
+  // The failsafe point may move along the temperature axis, but always runs
+  // the fans at full speed.
+  const duty = index === last ? 100 : Math.round(clamp(nextDuty, 0, 100));
+
+  if (temp === current.temp && duty === current.duty) return curve;
+
+  // Moving a point's duty past a neighbour carries the neighbour with it, so
+  // the curve stays monotonic without the point getting stuck.
+  return curve.map((point, pointIndex) => {
+    if (pointIndex === index) return { temp, duty };
+    if (pointIndex < index && point.duty > duty) return { ...point, duty };
+    if (pointIndex > index && pointIndex < last && point.duty < duty) return { ...point, duty };
+    return point;
+  });
+}
+
 function FanCurveChart({
   cpu,
   gpu,
-  dark,
+  liveTemps,
   selectedFan,
   selectedPoint,
   onSelect,
+  onChange,
 }: {
   cpu: FanCurvePoint[];
   gpu: FanCurvePoint[];
-  dark: boolean;
+  liveTemps: Record<FanKind, number | null>;
   selectedFan: FanKind;
   selectedPoint: number;
   onSelect: (fan: FanKind, index: number) => void;
+  onChange: (fan: FanKind, curve: FanCurvePoint[]) => void;
 }) {
   const { t } = useI18n();
-  const elementRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<ApexCharts | null>(null);
-  const series = useMemo(() => curveSeries(cpu, gpu, t), [cpu, gpu, t]);
-  const selectRef = useRef(onSelect);
-  selectRef.current = onSelect;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [width, setWidth] = useState(720);
+  const [dragging, setDragging] = useState<{ fan: FanKind; index: number } | null>(null);
+  const curves = { cpu, gpu };
+  const latest = useRef({ curves, onChange });
+  latest.current = { curves, onChange };
 
   useEffect(() => {
-    if (!elementRef.current) return;
-    const textColor = dark ? "#a8a8a8" : "#535353";
-    const gridColor = dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
-    const options: ApexOptions = {
-      chart: {
-        type: "line",
-        height: 336,
-        background: "transparent",
-        fontFamily: 'Inter, "SF Pro Display", "Segoe UI", sans-serif',
-        foreColor: textColor,
-        animations: { enabled: true, speed: 240, dynamicAnimation: { speed: 180 } },
-        toolbar: { show: false },
-        zoom: { enabled: false },
-        selection: { enabled: false },
-        events: {
-          dataPointSelection: (_event, _chart, config) => {
-            if (!config || config.seriesIndex < 0 || config.dataPointIndex < 0) return;
-            selectRef.current(config.seriesIndex === 0 ? "cpu" : "gpu", config.dataPointIndex);
-          },
-        },
-      },
-      series,
-      colors: ["#f29d49", "#58a6ff"],
-      stroke: { curve: "straight", lineCap: "round", width: 3 },
-      markers: {
-        size: 5,
-        strokeWidth: 2,
-        strokeColors: dark ? "#171717" : "#ffffff",
-        hover: { size: 7 },
-      },
-      dataLabels: { enabled: false },
-      legend: { show: false },
-      grid: {
-        borderColor: gridColor,
-        strokeDashArray: 4,
-        padding: { left: 8, right: 16, top: 4, bottom: 0 },
-      },
-      xaxis: {
-        type: "numeric",
-        min: 30,
-        max: 100,
-        tickAmount: 7,
-        axisBorder: { show: false },
-        axisTicks: { show: false },
-        labels: {
-          style: { colors: textColor, fontSize: "11px" },
-          formatter: (value) => `${Math.round(Number(value))}°`,
-        },
-        title: { text: t("fan.axisTemp"), style: { color: textColor, fontSize: "11px", fontWeight: 500 } },
-      },
-      yaxis: {
-        min: 0,
-        max: 100,
-        tickAmount: 5,
-        forceNiceScale: false,
-        labels: {
-          style: { colors: [textColor], fontSize: "11px" },
-          formatter: (value) => `${Math.round(value)}%`,
-        },
-        title: { text: t("fan.axisDuty"), style: { color: textColor, fontSize: "11px", fontWeight: 500 } },
-      },
-      tooltip: {
-        shared: false,
-        intersect: true,
-        theme: dark ? "dark" : "light",
-        x: { formatter: (value) => `${Math.round(Number(value))}°C` },
-        y: { formatter: (value) => `${Math.round(value)}%` },
-      },
-    };
-    const chart = new ApexCharts(elementRef.current, options);
-    chartRef.current = chart;
-    void chart.render();
-    return () => {
-      chartRef.current = null;
-      void chart.destroy();
-    };
-  }, [dark, t]);
+    const element = containerRef.current;
+    if (!element) return;
+    const update = () => setWidth(Math.max(320, Math.round(element.clientWidth)));
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
-  useEffect(() => {
-    if (chartRef.current) {
-      void chartRef.current.updateOptions({
-        series,
-        xaxis: { type: "numeric", min: 30, max: 100, tickAmount: 7 },
-      }, false, true);
+  const plotWidth = width - CHART_MARGIN.left - CHART_MARGIN.right;
+  const plotHeight = CHART_HEIGHT - CHART_MARGIN.top - CHART_MARGIN.bottom;
+  const x = (temp: number) => CHART_MARGIN.left + ((temp - CURVE_TEMP_MIN) / (CURVE_TEMP_MAX - CURVE_TEMP_MIN)) * plotWidth;
+  const y = (duty: number) => CHART_MARGIN.top + (1 - duty / 100) * plotHeight;
+
+  const pointerToValue = (event: React.PointerEvent) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    // The SVG is drawn at its CSS pixel size, so client offsets map 1:1.
+    const px = event.clientX - rect.left;
+    const py = event.clientY - rect.top;
+    return {
+      temp: CURVE_TEMP_MIN + ((px - CHART_MARGIN.left) / plotWidth) * (CURVE_TEMP_MAX - CURVE_TEMP_MIN),
+      duty: (1 - (py - CHART_MARGIN.top) / plotHeight) * 100,
+    };
+  };
+
+  const movePoint = (fan: FanKind, index: number, temp: number, duty: number) => {
+    const curve = latest.current.curves[fan];
+    const next = moveCurvePoint(curve, index, temp, duty);
+    if (next !== curve) latest.current.onChange(fan, next);
+  };
+
+  const handlePointerDown = (fan: FanKind, index: number) => (event: React.PointerEvent<SVGGElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    (event.currentTarget as SVGGElement).focus({ preventScroll: true });
+    onSelect(fan, index);
+    setDragging({ fan, index });
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<SVGGElement>) => {
+    if (!dragging) return;
+    const value = pointerToValue(event);
+    if (value) movePoint(dragging.fan, dragging.index, value.temp, value.duty);
+  };
+
+  const endDrag = (event: React.PointerEvent<SVGGElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
-  }, [series]);
+    setDragging(null);
+  };
 
-  useEffect(() => {
-    if (!chartRef.current) return;
-    const color = selectedFan === "cpu" ? "#f29d49" : "#58a6ff";
-    void chartRef.current.updateOptions({
-      markers: {
-        discrete: [{
-          seriesIndex: selectedFan === "cpu" ? 0 : 1,
-          dataPointIndex: selectedPoint,
-          fillColor: color,
-          strokeColor: dark ? "#ffffff" : "#111111",
-          size: 8,
-        }],
-      },
-    }, false, false);
-  }, [dark, selectedFan, selectedPoint]);
+  const handleKeyDown = (fan: FanKind, index: number) => (event: React.KeyboardEvent<SVGGElement>) => {
+    const step = event.shiftKey ? 5 : 1;
+    const point = latest.current.curves[fan][index];
+    if (!point) return;
+    const moves: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, step],
+      ArrowDown: [0, -step],
+    };
+    const move = moves[event.key];
+    if (!move) return;
+    event.preventDefault();
+    movePoint(fan, index, point.temp + move[0], point.duty + move[1]);
+  };
 
-  return <div className="fan-curve-chart" ref={elementRef} />;
+  const tempTicks = Array.from({ length: (CURVE_TEMP_MAX - CURVE_TEMP_MIN) / 10 + 1 }, (_, i) => CURVE_TEMP_MIN + i * 10);
+  const dutyTicks = [0, 20, 40, 60, 80, 100];
+  // Draw the curve being edited last so its points stay on top.
+  const order: FanKind[] = selectedFan === "cpu" ? ["gpu", "cpu"] : ["cpu", "gpu"];
+  const active = curves[selectedFan][selectedPoint];
+  const activeIsSafety = selectedPoint === curves[selectedFan].length - 1;
+
+  const linePath = (curve: FanCurvePoint[]) => curve
+    .map((point, index) => `${index === 0 ? "M" : "L"}${x(point.temp).toFixed(1)},${y(point.duty).toFixed(1)}`)
+    .join(" ");
+  // Below the first point the daemon holds its duty; above the last it runs at
+  // full speed. Extend the line to the chart edges to show that.
+  const fullPath = (curve: FanCurvePoint[]) => {
+    const first = curve[0];
+    const lastPoint = curve[curve.length - 1];
+    return `M${x(CURVE_TEMP_MIN)},${y(first.duty)} L${linePath(curve).slice(1)} L${x(CURVE_TEMP_MAX)},${y(lastPoint.duty)}`;
+  };
+  const areaPath = (curve: FanCurvePoint[]) => `${fullPath(curve)} L${x(CURVE_TEMP_MAX)},${y(0)} L${x(CURVE_TEMP_MIN)},${y(0)} Z`;
+
+  let bubble: { left: number; top: number; text: string } | null = null;
+  if (active) {
+    const text = `${active.temp}°C · ${active.duty}%${activeIsSafety ? ` · ${t("fan.safePoint")}` : ""}`;
+    const bubbleWidth = text.length * 6.6 + 18;
+    const px = x(active.temp);
+    const py = y(active.duty);
+    bubble = {
+      left: clamp(px - bubbleWidth / 2, CHART_MARGIN.left, width - CHART_MARGIN.right - bubbleWidth),
+      top: py - 38 < CHART_MARGIN.top ? py + 14 : py - 38,
+      text,
+    };
+  }
+
+  return (
+    <div className={`fan-curve-chart${dragging ? " fan-curve-dragging" : ""}`} ref={containerRef}>
+      <svg
+        aria-label={t("fan.tempDuty")}
+        height={CHART_HEIGHT}
+        ref={svgRef}
+        role="group"
+        width={width}
+      >
+        <g className="curve-grid">
+          {tempTicks.map((temp) => (
+            <g key={`t${temp}`}>
+              <line x1={x(temp)} x2={x(temp)} y1={CHART_MARGIN.top} y2={CHART_MARGIN.top + plotHeight} />
+              <text className="curve-axis-label" textAnchor="middle" x={x(temp)} y={CHART_MARGIN.top + plotHeight + 18}>{temp}°</text>
+            </g>
+          ))}
+          {dutyTicks.map((duty) => (
+            <g key={`d${duty}`}>
+              <line x1={CHART_MARGIN.left} x2={CHART_MARGIN.left + plotWidth} y1={y(duty)} y2={y(duty)} />
+              <text className="curve-axis-label" dominantBaseline="middle" textAnchor="end" x={CHART_MARGIN.left - 8} y={y(duty)}>{duty}%</text>
+            </g>
+          ))}
+          <text className="curve-axis-title" textAnchor="middle" x={CHART_MARGIN.left + plotWidth / 2} y={CHART_HEIGHT - 4}>{t("fan.axisTemp")}</text>
+          <text
+            className="curve-axis-title"
+            textAnchor="middle"
+            transform={`translate(12 ${CHART_MARGIN.top + plotHeight / 2}) rotate(-90)`}
+          >
+            {t("fan.axisDuty")}
+          </text>
+        </g>
+
+        {(["cpu", "gpu"] as const).map((fan) => {
+          const temp = liveTemps[fan];
+          if (temp === null || temp < CURVE_TEMP_MIN || temp > CURVE_TEMP_MAX) return null;
+          return (
+            <g className={`curve-live curve-${fan}`} key={`live-${fan}`}>
+              <line x1={x(temp)} x2={x(temp)} y1={CHART_MARGIN.top} y2={CHART_MARGIN.top + plotHeight} />
+              <text textAnchor="middle" x={x(temp)} y={CHART_MARGIN.top + plotHeight - 6}>{Math.round(temp)}°</text>
+            </g>
+          );
+        })}
+
+        {dragging && active ? (
+          <g className="curve-guide">
+            <line x1={CHART_MARGIN.left} x2={x(active.temp)} y1={y(active.duty)} y2={y(active.duty)} />
+            <line x1={x(active.temp)} x2={x(active.temp)} y1={y(active.duty)} y2={CHART_MARGIN.top + plotHeight} />
+          </g>
+        ) : null}
+
+        {order.map((fan) => {
+          const curve = curves[fan];
+          const isActive = fan === selectedFan;
+          return (
+            <g className={`curve-series curve-${fan}${isActive ? " curve-series-active" : ""}`} key={fan}>
+              {isActive ? <path className="curve-area" d={areaPath(curve)} /> : null}
+              <path className="curve-line" d={fullPath(curve)} />
+              {curve.map((point, index) => {
+                const selected = isActive && index === selectedPoint;
+                const safety = index === curve.length - 1;
+                return (
+                  <g
+                    aria-label={`${fan.toUpperCase()} ${point.temp}°C ${point.duty}%`}
+                    className={`curve-point${selected ? " curve-point-selected" : ""}${safety ? " curve-point-safety" : ""}`}
+                    key={index}
+                    onFocus={() => onSelect(fan, index)}
+                    onKeyDown={handleKeyDown(fan, index)}
+                    onLostPointerCapture={() => setDragging(null)}
+                    onPointerCancel={endDrag}
+                    onPointerDown={handlePointerDown(fan, index)}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={endDrag}
+                    role="slider"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={point.duty}
+                    aria-valuetext={`${point.temp}°C, ${point.duty}%`}
+                    tabIndex={isActive ? 0 : -1}
+                    transform={`translate(${x(point.temp)} ${y(point.duty)})`}
+                  >
+                    <circle className="curve-point-hit" r={14} />
+                    <circle className="curve-point-dot" r={selected ? 7 : 5} />
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })}
+      </svg>
+      {bubble ? (
+        <span className={`curve-bubble curve-bubble-${selectedFan}`} style={{ left: bubble.left, top: bubble.top }}>
+          {bubble.text}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 function StrategySwitch({
@@ -3775,13 +3863,6 @@ function mergePersistedFanProfiles(current: FanProfiles, saved: Record<PowerSour
   }
 
   return next;
-}
-
-function curveSeries(cpu: FanCurvePoint[], gpu: FanCurvePoint[], t: ReturnType<typeof useI18n>["t"]) {
-  return [
-    { name: t("fan.cpuFan"), data: cpu.map((point) => ({ x: point.temp, y: point.duty })) },
-    { name: t("fan.gpuFan"), data: gpu.map((point) => ({ x: point.temp, y: point.duty })) },
-  ];
 }
 
 function toPwmPoint(point: FanCurvePoint) {
